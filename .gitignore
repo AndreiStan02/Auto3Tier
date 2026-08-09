@@ -1,0 +1,24 @@
+# Terraform working dirs and lock files — each user runs their own init
+.terraform/
+.terraform.lock.hcl
+
+# State — never commit, backend is remote
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+
+# Plans and crash logs
+*.tfplan
+crash.log
+crash.*.log
+
+# Local overrides and CLI config
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# macOS
+.DS_Store

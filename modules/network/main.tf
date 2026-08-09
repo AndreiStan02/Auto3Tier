@@ -15,7 +15,7 @@ resource "aws_vpc" "main" {
 
 resource "aws_subnet" "public" {
   count                   = var.az_count
-  vpc_id                  = aws_vpc.this.id
+  vpc_id                  = aws_vpc.main.id
   cidr_block              = cidrsubnet(var.vpc_cidr, 4, count.index)
   availability_zone       = local.azs[count.index]
   map_public_ip_on_launch = true
@@ -25,7 +25,7 @@ resource "aws_subnet" "public" {
 
 resource "aws_subnet" "app" {
   count             = var.az_count
-  vpc_id            = aws_vpc.this.id
+  vpc_id            = aws_vpc.main.id
   cidr_block        = cidrsubnet(var.vpc_cidr, 4, count.index + var.az_count)
   availability_zone = local.azs[count.index]
 
@@ -34,7 +34,7 @@ resource "aws_subnet" "app" {
 
 resource "aws_subnet" "data" {
   count             = var.az_count
-  vpc_id            = aws_vpc.this.id
+  vpc_id            = aws_vpc.main.id
   cidr_block        = cidrsubnet(var.vpc_cidr, 4, count.index + var.az_count * 2)
   availability_zone = local.azs[count.index]
 
