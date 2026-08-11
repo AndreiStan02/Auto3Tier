@@ -1,14 +1,14 @@
 name: Deploy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "environment/**"
-      - "modules/**"
-      - "spa/**"
-      - ".github/workflows/deploy.yml"
-      - ".github/actions/**"
+  #push:
+  #  branches: [main]
+  #  paths:
+  #    - "environment/**"
+  #    - "modules/**"
+  #    - "spa/**"
+  #    - ".github/workflows/deploy.yml"
+  #    - ".github/actions/**"
   workflow_dispatch:
 
 permissions:
