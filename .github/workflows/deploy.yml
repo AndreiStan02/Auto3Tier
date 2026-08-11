@@ -1,0 +1,132 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "environment/**"
+      - "modules/**"
+      - "spa/**"
+      - ".github/workflows/deploy.yml"
+      - ".github/actions/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialised with destroy so the two can never touch the state at once.
+# cancel-in-progress must stay false: killing a run mid-apply strands the
+# state lock and leaves untracked resources behind.
+concurrency:
+  group: auto3tier
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Provision and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # first run creates RDS (~10m) and CloudFront (~15m)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Credentials, state bucket, terraform init.
+      - name: Terraform setup
+        uses: ./.github/actions/tf-setup
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # ---- Infrastructure ------------------------------------------------
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Validate
+        run: terraform -chdir=environment validate
+
+      - name: Plan
+        run: terraform -chdir=environment plan -input=false -out=tfplan
+
+      # Applies the saved plan, so what runs is exactly what was planned.
+      - name: Apply
+        run: terraform -chdir=environment apply -input=false tfplan
+
+      # ---- Content -------------------------------------------------------
+
+      - name: Read outputs
+        id: tf
+        run: |
+          set -euo pipefail
+
+          # The presentation tier may not exist yet. Skip publishing rather
+          # than failing, so the infrastructure half can be built first.
+          if ! bucket=$(terraform -chdir=environment output -raw spa_bucket_name 2>/dev/null); then
+            echo "::notice::No spa_bucket_name output yet — skipping SPA publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "skip=false"
+            echo "bucket=$bucket"
+            echo "distribution=$(terraform -chdir=environment output -raw cloudfront_distribution_id)"
+            echo "url=$(terraform -chdir=environment output -raw app_url)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check SPA files
+        if: steps.tf.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          if [ ! -f spa/index.html ]; then
+            echo "::error::spa/index.html not found. Put your built SPA (the contents of dist/ or build/) in spa/."
+            exit 1
+          fi
+
+      # Two passes on purpose. Hashed filenames (app.4f2b9c.js) are safe to
+      # cache forever; index.html must never be cached, because it is what
+      # points at the new hashes.
+      - name: Publish SPA
+        if: steps.tf.outputs.skip == 'false'
+        env:
+          BUCKET: ${{ steps.tf.outputs.bucket }}
+        run: |
+          set -euo pipefail
+
+          aws s3 sync spa/ "s3://$BUCKET" \
+            --delete \
+            --cache-control "public,max-age=31536000,immutable" \
+            --exclude index.html
+
+          aws s3 cp spa/index.html "s3://$BUCKET/index.html" \
+            --cache-control "no-cache"
+
+      # Must run after the sync, never before.
+      - name: Invalidate CloudFront
+        if: steps.tf.outputs.skip == 'false'
+        env:
+          DISTRIBUTION: ${{ steps.tf.outputs.distribution }}
+        run: |
+          set -euo pipefail
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION" \
+            --paths "/*" \
+            --query 'Invalidation.Id' --output text
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            if [ "${{ steps.tf.outputs.skip }}" = "false" ]; then
+              echo "### Deployed"
+              echo ""
+              echo "<${{ steps.tf.outputs.url }}>"
+              echo ""
+              echo "CloudFront caches propagate for a minute or two after invalidation."
+            else
+              echo "### Infrastructure applied"
+              echo ""
+              echo "No SPA published — the presentation tier is not in place yet."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

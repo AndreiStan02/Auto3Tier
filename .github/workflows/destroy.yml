@@ -1,0 +1,118 @@
+name: Destroy
+
+# Manual only. Never attach a push trigger to this workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'destroy' to confirm. This permanently deletes all infrastructure, including the database."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Same group as deploy — the two must never touch the state at once.
+concurrency:
+  group: auto3tier
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    name: Tear down
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # CloudFront alone takes ~15-20m to disable and delete
+
+    steps:
+      # Fails loudly on a mistyped confirmation rather than skipping the job,
+      # which would report as a quiet success.
+      - name: Confirm intent
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "destroy" ]; then
+            echo "::error::Confirmation failed — expected exactly 'destroy', got '$CONFIRM'. Nothing was deleted."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Terraform setup
+        uses: ./.github/actions/tf-setup
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # Terraform cannot delete a non-empty bucket. force_destroy on the
+      # resource covers this, but emptying here means a forgotten
+      # force_destroy fails the deploy, not the teardown.
+      - name: Empty SPA bucket
+        run: |
+          set -euo pipefail
+          if bucket=$(terraform -chdir=environment output -raw spa_bucket_name 2>/dev/null); then
+            echo "Emptying s3://$bucket"
+            aws s3 rm "s3://$bucket" --recursive
+          else
+            echo "No spa_bucket_name output — nothing to empty."
+          fi
+
+      # Planned then applied, so the run log is a record of what was removed.
+      - name: Plan destroy
+        run: terraform -chdir=environment plan -destroy -input=false -out=tfplan
+
+      - name: Apply
+        run: terraform -chdir=environment apply -input=false tfplan
+
+      # Deliberately has no `if: always()`. It runs only when the destroy above
+      # succeeded — deleting state after a partial destroy would strand live
+      # resources with no record of what they are.
+      #
+      # The bucket is versioned, so `s3 rb --force` is not enough: it removes
+      # current objects but leaves every old version and delete marker behind,
+      # and the bucket delete then fails as non-empty.
+      - name: Delete state bucket
+        id: cleanup
+        run: |
+          set -euo pipefail
+
+          echo "Removing all object versions from $STATE_BUCKET"
+          while :; do
+            payload=$(aws s3api list-object-versions \
+              --bucket "$STATE_BUCKET" \
+              --max-keys 500 \
+              --query '[Versions, DeleteMarkers][][].{Key:Key,VersionId:VersionId}' \
+              --output json)
+
+            [ "$payload" = "null" ] && payload='[]'
+            count=$(jq 'length' <<<"$payload")
+            [ "$count" -eq 0 ] && break
+
+            aws s3api delete-objects \
+              --bucket "$STATE_BUCKET" \
+              --delete "$(jq -c '{Objects: ., Quiet: true}' <<<"$payload")" >/dev/null
+            echo "  deleted $count"
+          done
+
+          aws s3api delete-bucket --bucket "$STATE_BUCKET"
+          echo "Deleted $STATE_BUCKET"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            if [ "${{ steps.cleanup.outcome }}" = "success" ]; then
+              echo "### Teardown complete"
+              echo ""
+              echo "All infrastructure and the Terraform state bucket have been deleted."
+              echo ""
+              echo "Still in your account: the IAM user you created during setup, and any"
+              echo "CloudWatch log groups AWS created outside Terraform. Remove those by hand."
+            else
+              echo "### Teardown incomplete"
+              echo ""
+              echo "The state bucket was **kept** because the destroy did not finish cleanly."
+              echo "Re-run this workflow — Terraform still has a record of what remains."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

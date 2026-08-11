@@ -1,0 +1,126 @@
+name: Terraform Setup
+description: Resolve region, configure AWS credentials, ensure the state bucket exists, and run terraform init.
+
+inputs:
+  aws-access-key-id:
+    description: AWS access key ID
+    required: true
+  aws-secret-access-key:
+    description: AWS secret access key
+    required: true
+  working-directory:
+    description: Terraform root module directory
+    required: false
+    default: environment
+  terraform-version:
+    description: >-
+      Terraform version to install. Keep this matched to the version you run
+      locally — state written by a newer Terraform cannot be read by an older
+      one. Quoted so YAML treats it as a string, not a float.
+    required: false
+    default: "1.15.8"
+
+runs:
+  using: composite
+  steps:
+    # terraform.tfvars is the single source of truth for the region, but the
+    # state bucket has to exist before Terraform ever parses it — so read it
+    # here with sed. Requires `aws_region = "..."` at the start of a line,
+    # which means comments and stray mentions won't match.
+    - name: Resolve region
+      shell: bash
+      run: |
+        set -euo pipefail
+        tfvars="${{ inputs.working-directory }}/terraform.tfvars"
+        region=$(sed -n 's/^[[:space:]]*aws_region[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$tfvars" | head -1)
+        if [ -z "$region" ]; then
+          echo "::error file=$tfvars::Could not read aws_region. Expected a line like: aws_region = \"eu-west-1\""
+          exit 1
+        fi
+        echo "AWS_REGION=$region" >> "$GITHUB_ENV"
+        echo "Region: $region"
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ inputs.aws-access-key-id }}
+        aws-secret-access-key: ${{ inputs.aws-secret-access-key }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    # Account ID keeps the bucket name globally unique without a random
+    # suffix, so every run resolves to the same bucket.
+    - name: Resolve state bucket name
+      shell: bash
+      run: |
+        set -euo pipefail
+        account_id=$(aws sts get-caller-identity --query Account --output text)
+        echo "STATE_BUCKET=auto3tier-tfstate-${account_id}-${AWS_REGION}" >> "$GITHUB_ENV"
+
+    # Create only if missing, but always re-assert the configuration so a
+    # partially-failed first run repairs itself on the next deploy.
+    - name: Ensure state bucket
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if aws s3api head-bucket --bucket "$STATE_BUCKET" 2>/dev/null; then
+          echo "State bucket already exists: $STATE_BUCKET"
+        else
+          echo "Creating state bucket: $STATE_BUCKET"
+          # us-east-1 is the one region that rejects LocationConstraint.
+          if [ "$AWS_REGION" = "us-east-1" ]; then
+            aws s3api create-bucket --bucket "$STATE_BUCKET"
+          else
+            aws s3api create-bucket \
+              --bucket "$STATE_BUCKET" \
+              --create-bucket-configuration "LocationConstraint=$AWS_REGION"
+          fi
+          aws s3api wait bucket-exists --bucket "$STATE_BUCKET"
+        fi
+
+        # Versioning is the escape hatch from a corrupted state write.
+        aws s3api put-bucket-versioning \
+          --bucket "$STATE_BUCKET" \
+          --versioning-configuration Status=Enabled
+
+        aws s3api put-public-access-block \
+          --bucket "$STATE_BUCKET" \
+          --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+        aws s3api put-bucket-encryption \
+          --bucket "$STATE_BUCKET" \
+          --server-side-encryption-configuration \
+            '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
+        # Old state versions accumulate forever otherwise.
+        aws s3api put-bucket-lifecycle-configuration \
+          --bucket "$STATE_BUCKET" \
+          --lifecycle-configuration '{
+            "Rules": [{
+              "ID": "expire-noncurrent-state",
+              "Status": "Enabled",
+              "Filter": {"Prefix": ""},
+              "NoncurrentVersionExpiration": {"NoncurrentDays": 90}
+            }]
+          }'
+
+    # terraform_wrapper mangles stdout, which breaks `terraform output -raw`
+    # capture in the deploy workflow.
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        terraform_wrapper: false
+
+    # use_lockfile replaces the old DynamoDB lock table (Terraform >= 1.11).
+    - name: Terraform init
+      shell: bash
+      run: |
+        set -euo pipefail
+        terraform -chdir="${{ inputs.working-directory }}" init \
+          -input=false \
+          -backend-config="bucket=$STATE_BUCKET" \
+          -backend-config="key=auto3tier/terraform.tfstate" \
+          -backend-config="region=$AWS_REGION" \
+          -backend-config="use_lockfile=true"

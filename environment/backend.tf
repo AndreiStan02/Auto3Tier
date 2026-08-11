@@ -11,7 +11,7 @@ terraform {
   # Intentionally empty — values are injected at init time by the
   # GitHub Actions workflow via -backend-config flags, so nobody
   # has to edit this file or invent a bucket name.
-  # backend "s3" {}
+  backend "s3" {}
 }
 
 provider "aws" {
