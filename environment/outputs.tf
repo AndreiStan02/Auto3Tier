@@ -1,5 +1,4 @@
-# The three the deploy workflow reads by name. Renaming any of these breaks
-# .github/workflows/deploy.yml.
+# deploy.yml reads these three by name. Renaming one breaks the SPA publish.
 
 output "app_url" {
   description = "Public URL of the deployed application"

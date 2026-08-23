@@ -25,9 +25,8 @@ module "data_tier" {
   tags = var.tags
 }
 
-# Owns the ALB as well as ECS, so the whole request path lives in one module.
-# Attaches its own ingress rule to the database security group, which is what
-# keeps the dependency between this and data_tier one-directional.
+# Owns the ALB as well as ECS. Attaches the database ingress rule itself, which
+# is what keeps this and data_tier from forming a cycle.
 module "application_tier" {
   source = "../modules/application-tier"
 
@@ -54,8 +53,7 @@ module "application_tier" {
   tags = var.tags
 }
 
-# Serves the SPA from S3 and proxies /api/* to the load balancer, so the
-# browser only ever sees one origin.
+# Serves the SPA and proxies /api/* to the ALB — one origin, so no CORS.
 module "presentation_tier" {
   source = "../modules/presentation-tier"
 

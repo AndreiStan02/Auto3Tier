@@ -48,17 +48,13 @@ variable "health_path" {
 }
 
 variable "health_check_matcher" {
-  description = "HTTP status codes counted as healthy. A backend whose health endpoint returns 204 will never go healthy on the default. Accepts a list or range, e.g. \"200,204\" or \"200-299\"."
+  description = "Status codes counted as healthy, e.g. \"200,204\" or \"200-299\". A 204 health endpoint never goes healthy on the default."
   type        = string
   default     = "200"
 }
 
 variable "cpu_architecture" {
-  description = <<-EOT
-    Must match the architecture your image was built for. Images built on an
-    Apple Silicon Mac without --platform are ARM64; the task will fail with
-    "exec format error" if this does not match.
-  EOT
+  description = "Must match the image. Apple Silicon builds without --platform are ARM64; a mismatch fails with \"exec format error\"."
   type        = string
   default     = "X86_64"
 
@@ -82,15 +78,7 @@ variable "cpu" {
 }
 
 variable "memory" {
-  description = <<-EOT
-    Task memory in MiB. Fargate only allows certain pairings with cpu:
-      256  -> 512, 1024, 2048
-      512  -> 1024..4096
-      1024 -> 2048..8192
-      2048 -> 4096..16384
-      4096 -> 8192..30720
-    An invalid pairing passes plan and fails at apply.
-  EOT
+  description = "Task memory in MiB. Fargate fixes the valid pairings with cpu (256 -> 512/1024/2048, 512 -> 1-4GB, 1024 -> 2-8GB); an invalid pair fails at apply, not plan."
   type        = number
   default     = 512
 }
@@ -118,9 +106,7 @@ variable "db_security_group_id" {
   type        = string
 }
 
-# Host, port and database name are not secret, so they are passed to the
-# container as plain environment variables. Only the credentials come from
-# Secrets Manager.
+# Not secret, so passed as plain env vars. Only credentials go via Secrets Manager.
 variable "db_endpoint" {
   description = "Database hostname, injected as DB_HOST"
   type        = string

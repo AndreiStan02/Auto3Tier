@@ -5,10 +5,8 @@ resource "aws_db_subnet_group" "db_subnet_group" {
   tags = merge(var.tags, { Name = "${var.name}-db-subnet-group" })
 }
 
-# Deliberately has no ingress rules. The application tier attaches its own
-# rule to this group, which is what keeps the dependency between the two
-# modules one-directional — data-tier cannot reference the task security
-# group, because application-tier needs this module's secret ARN.
+# No ingress rules here. The application tier attaches its own, which is what
+# keeps the two modules from forming a dependency cycle.
 resource "aws_security_group" "db_sg" {
   name        = "${var.name}-db-sg"
   description = "Security group for RDS database"
@@ -26,9 +24,8 @@ resource "aws_db_instance" "db_instance" {
   db_name  = var.db_name
   username = var.db_username
 
-  # RDS generates the master password and owns the Secrets Manager entry,
-  # so it never appears in Terraform state. Deleting the instance deletes
-  # the secret with it, with no recovery window to block a redeploy.
+  # Password generated and held by RDS, so it never enters state. Dropped with
+  # the instance, with no recovery window to block a redeploy.
   manage_master_user_password = true
 
   allocated_storage     = var.allocated_storage
@@ -41,15 +38,12 @@ resource "aws_db_instance" "db_instance" {
   publicly_accessible    = false
   multi_az               = var.multi_az
 
-  # These three exist so the destroy workflow can run unattended. They are
-  # also data-loss footguns: no final snapshot, no protection, no backups.
-  # See the warning in the README.
+  # Required for unattended destroy. No snapshot, no backups — see README.
   skip_final_snapshot     = true
   deletion_protection     = false
   backup_retention_period = 0
 
-  # Changes take effect now rather than in the weekly maintenance window,
-  # so an apply that reports success has actually happened.
+  # Apply now rather than in the maintenance window, so a green apply is real.
   apply_immediately = true
 
   tags = merge(var.tags, { Name = "${var.name}-db" })

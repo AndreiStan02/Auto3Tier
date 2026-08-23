@@ -9,9 +9,8 @@ variable "project_name" {
   type        = string
   default     = "myapp"
 
-  # Load balancer and target group names are capped at 32 characters and
-  # reject underscores; RDS identifiers are similarly restricted. 21 leaves
-  # room for the longest suffix this project appends ("-ecs-execution").
+  # ALB and target group names cap at 32 chars and reject underscores.
+  # 21 leaves room for the longest suffix appended ("-ecs-execution").
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{0,20}$", var.project_name))
     error_message = "project_name must start with a lowercase letter, contain only lowercase letters, digits and hyphens, and be at most 21 characters."
@@ -114,8 +113,7 @@ variable "az_count" {
   type        = number
   default     = 2
 
-  # Two is a hard floor: RDS refuses to create a subnet group with fewer.
-  # Five is the ceiling because three tiers are carved from 16 /20 blocks.
+  # RDS needs two AZs; three tiers out of 16 /20 blocks caps it at five.
   validation {
     condition     = var.az_count >= 2 && var.az_count <= 5
     error_message = "az_count must be between 2 and 5. RDS requires at least two AZs."

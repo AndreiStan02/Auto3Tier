@@ -24,8 +24,7 @@ jobs:
     timeout-minutes: 60 # CloudFront alone takes ~15-20m to disable and delete
 
     steps:
-      # Fails loudly on a mistyped confirmation rather than skipping the job,
-      # which would report as a quiet success.
+      # Fails rather than skips — a skipped job reports as a quiet success.
       - name: Confirm intent
         env:
           CONFIRM: ${{ inputs.confirm }}
@@ -45,9 +44,8 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      # Terraform cannot delete a non-empty bucket. force_destroy on the
-      # resource covers this, but emptying here means a forgotten
-      # force_destroy fails the deploy, not the teardown.
+      # force_destroy covers this, but emptying here means a forgotten
+      # force_destroy fails the deploy rather than the teardown.
       - name: Empty SPA bucket
         run: |
           set -euo pipefail
@@ -65,13 +63,10 @@ jobs:
       - name: Apply
         run: terraform -chdir=environment apply -input=false tfplan
 
-      # Deliberately has no `if: always()`. It runs only when the destroy above
-      # succeeded — deleting state after a partial destroy would strand live
-      # resources with no record of what they are.
-      #
-      # The bucket is versioned, so `s3 rb --force` is not enough: it removes
-      # current objects but leaves every old version and delete marker behind,
-      # and the bucket delete then fails as non-empty.
+      # No `if: always()` on purpose — dropping state after a partial destroy
+      # would strand live resources with no record of them. The bucket is
+      # versioned, so `s3 rb --force` is not enough: versions and delete
+      # markers survive it and the bucket delete then fails as non-empty.
       - name: Delete state bucket
         id: cleanup
         run: |

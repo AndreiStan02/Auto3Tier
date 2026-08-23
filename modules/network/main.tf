@@ -115,6 +115,8 @@ resource "aws_route_table_association" "data-rt-assoc" {
   route_table_id = aws_route_table.data-rt.id
 }
 
+# Free gateway endpoint. ECR stores image layers in S3, so this keeps every
+# task start off the NAT gateway.
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.main.id
   service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"

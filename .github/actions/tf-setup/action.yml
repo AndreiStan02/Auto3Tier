@@ -13,20 +13,16 @@ inputs:
     required: false
     default: environment
   terraform-version:
-    description: >-
-      Terraform version to install. Keep this matched to the version you run
-      locally — state written by a newer Terraform cannot be read by an older
-      one. Quoted so YAML treats it as a string, not a float.
+    # Quoted, or YAML parses it as a float and 1.20 becomes 1.2.
+    description: "Terraform version. Keep matched to your local one — older Terraform cannot read state written by a newer one."
     required: false
     default: "1.15.8"
 
 runs:
   using: composite
   steps:
-    # terraform.tfvars is the single source of truth for the region, but the
-    # state bucket has to exist before Terraform ever parses it — so read it
-    # here with sed. Requires `aws_region = "..."` at the start of a line,
-    # which means comments and stray mentions won't match.
+    # The state bucket must exist before Terraform parses tfvars, so the region
+    # is read out here. Requires `aws_region = "..."` at the start of a line.
     - name: Resolve region
       shell: bash
       run: |
@@ -47,8 +43,8 @@ runs:
         aws-secret-access-key: ${{ inputs.aws-secret-access-key }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # Account ID keeps the bucket name globally unique without a random
-    # suffix, so every run resolves to the same bucket.
+    # Account ID makes the name unique without a random suffix, so every run
+    # resolves to the same bucket.
     - name: Resolve state bucket name
       shell: bash
       run: |
@@ -56,8 +52,8 @@ runs:
         account_id=$(aws sts get-caller-identity --query Account --output text)
         echo "STATE_BUCKET=auto3tier-tfstate-${account_id}-${AWS_REGION}" >> "$GITHUB_ENV"
 
-    # Create only if missing, but always re-assert the configuration so a
-    # partially-failed first run repairs itself on the next deploy.
+    # Create if missing, but always re-assert config so a half-failed first run
+    # repairs itself next deploy.
     - name: Ensure state bucket
       shell: bash
       run: |
@@ -78,7 +74,7 @@ runs:
           aws s3api wait bucket-exists --bucket "$STATE_BUCKET"
         fi
 
-        # Versioning is the escape hatch from a corrupted state write.
+        # Escape hatch from a corrupted state write.
         aws s3api put-bucket-versioning \
           --bucket "$STATE_BUCKET" \
           --versioning-configuration Status=Enabled
@@ -105,8 +101,7 @@ runs:
             }]
           }'
 
-    # terraform_wrapper mangles stdout, which breaks `terraform output -raw`
-    # capture in the deploy workflow.
+    # terraform_wrapper mangles stdout and breaks `terraform output -raw`.
     - name: Install Terraform
       uses: hashicorp/setup-terraform@v3
       with:

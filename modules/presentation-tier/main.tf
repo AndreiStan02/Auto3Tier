@@ -52,15 +52,9 @@ data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
   name = "Managed-AllViewerExceptHostHeader"
 }
 
-# SPA deep-link routing.
-#
-# The obvious approach is custom_error_response mapping 403/404 to
-# /index.html, but that setting is distribution-wide: it would also rewrite
-# genuine 404s and 403s coming back from the API origin into an HTML page
-# with status 200, silently breaking every backend error path.
-#
-# A function attached to a single cache behaviour only runs for requests
-# matching that behaviour, so /api/* is untouched.
+# SPA deep links. custom_error_response would be simpler but is
+# distribution-wide, so it would also turn API 403/404s into index.html with a
+# 200. A function bound to one behaviour leaves /api/* alone.
 resource "aws_cloudfront_function" "spa_router" {
   name    = "${var.name}-spa-router"
   runtime = "cloudfront-js-2.0"

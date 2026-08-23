@@ -14,9 +14,8 @@ on:
 permissions:
   contents: read
 
-# Serialised with destroy so the two can never touch the state at once.
-# cancel-in-progress must stay false: killing a run mid-apply strands the
-# state lock and leaves untracked resources behind.
+# Serialised with destroy. cancel-in-progress must stay false: killing a run
+# mid-apply strands the state lock and leaves untracked resources behind.
 concurrency:
   group: auto3tier
   cancel-in-progress: false
@@ -31,7 +30,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Credentials, state bucket, terraform init.
       - name: Terraform setup
         uses: ./.github/actions/tf-setup
         with:
@@ -60,8 +58,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The presentation tier may not exist yet. Skip publishing rather
-          # than failing, so the infrastructure half can be built first.
+          # Skip publishing until the presentation tier exists.
           if ! bucket=$(terraform -chdir=environment output -raw spa_bucket_name 2>/dev/null); then
             echo "::notice::No spa_bucket_name output yet — skipping SPA publish."
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -84,9 +81,8 @@ jobs:
             exit 1
           fi
 
-      # Two passes on purpose. Hashed filenames (app.4f2b9c.js) are safe to
-      # cache forever; index.html must never be cached, because it is what
-      # points at the new hashes.
+      # Two passes: hashed filenames cache forever, index.html never — it is
+      # what points at the new hashes.
       - name: Publish SPA
         if: steps.tf.outputs.skip == 'false'
         env:
@@ -94,8 +90,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # --exclude also protects these from --delete, which is what we
-          # want: they are repo artifacts, not deployment artifacts.
+          # --exclude also shields these from --delete.
           aws s3 sync spa/ "s3://$BUCKET" \
             --delete \
             --cache-control "public,max-age=31536000,immutable" \

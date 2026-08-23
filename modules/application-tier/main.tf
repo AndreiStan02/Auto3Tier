@@ -11,6 +11,8 @@ resource "aws_security_group" "alb_sg" {
   tags = merge(var.tags, { Name = "${var.name}-alb-sg" })
 }
 
+# Prefix list, not 0.0.0.0/0 — the ALB is public but only CloudFront can reach
+# it, so nobody bypasses the CDN.
 resource "aws_vpc_security_group_ingress_rule" "alb_from_cloudfront" {
   security_group_id = aws_security_group.alb_sg.id
   prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
@@ -141,16 +143,13 @@ resource "aws_iam_role_policy" "execution_secrets" {
   })
 }
 
-# Separate from the execution role: this is what the app itself uses at
-# runtime. Carries nothing but ECS Exec support by default — add S3, SQS
-# etc. as the application needs them.
+# Runtime role for the application code itself. Add S3, SQS etc. as needed.
 resource "aws_iam_role" "task" {
   name               = "${var.name}-ecs-task"
   assume_role_policy = data.aws_iam_policy_document.assume.json
 }
 
-# Required by enable_execute_command on the service. Without these, exec
-# fails with a connection error rather than a permissions one.
+# Required by enable_execute_command, or exec fails with a connection error.
 resource "aws_iam_role_policy" "task_exec_command" {
   name = "ecs-exec"
   role = aws_iam_role.task.id
@@ -261,6 +260,7 @@ resource "aws_ecs_service" "app_service" {
     container_port   = var.backend_port
   }
 
+  # Rolls back a bad image in minutes instead of retrying for hours.
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -268,9 +268,9 @@ resource "aws_ecs_service" "app_service" {
 
   health_check_grace_period_seconds = 60
 
-  # Lets `aws ecs execute-command` open a shell in a running task, which is
-  # usually the fastest way to work out why a container is misbehaving.
+  # Allows `aws ecs execute-command` to shell into a running task.
   enable_execute_command = true
 
+  # Service creation fails intermittently if the listener is not ready.
   depends_on = [aws_lb_listener.http]
 }
