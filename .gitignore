@@ -1,6 +1,8 @@
-# Terraform working dirs and lock files — each user runs their own init
+# Terraform working dirs
 .terraform/
-.terraform.lock.hcl
+
+# .terraform.lock.hcl is deliberately NOT ignored. Committing it pins the
+# provider versions so CI resolves exactly what you tested against.
 
 # State — never commit, backend is remote
 *.tfstate

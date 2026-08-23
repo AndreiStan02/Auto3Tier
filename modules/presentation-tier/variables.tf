@@ -1,10 +1,12 @@
 variable "name" {
-  type = string
+  description = "Prefix for all resource names"
+  type        = string
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Tags applied to every resource"
+  type        = map(string)
+  default     = {}
 }
 
 variable "price_class" {

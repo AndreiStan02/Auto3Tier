@@ -52,6 +52,33 @@ data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
   name = "Managed-AllViewerExceptHostHeader"
 }
 
+# SPA deep-link routing.
+#
+# The obvious approach is custom_error_response mapping 403/404 to
+# /index.html, but that setting is distribution-wide: it would also rewrite
+# genuine 404s and 403s coming back from the API origin into an HTML page
+# with status 200, silently breaking every backend error path.
+#
+# A function attached to a single cache behaviour only runs for requests
+# matching that behaviour, so /api/* is untouched.
+resource "aws_cloudfront_function" "spa_router" {
+  name    = "${var.name}-spa-router"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  comment = "Rewrites client-side routes to /index.html"
+
+  code = <<-JS
+    function handler(event) {
+      var uri = event.request.uri;
+      // No file extension means it is a client-side route, not an asset.
+      if (!uri.includes('.')) {
+        event.request.uri = '/index.html';
+      }
+      return event.request;
+    }
+  JS
+}
+
 resource "aws_cloudfront_distribution" "spa_distribution" {
   enabled             = true
   is_ipv6_enabled     = true
@@ -87,6 +114,11 @@ resource "aws_cloudfront_distribution" "spa_distribution" {
     cached_methods         = ["GET", "HEAD"]
     compress               = true
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa_router.arn
+    }
   }
 
   ordered_cache_behavior {
@@ -100,20 +132,6 @@ resource "aws_cloudfront_distribution" "spa_distribution" {
     origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
   }
 
-
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
-  }
-
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
-  }
 
   restrictions {
     geo_restriction {

@@ -77,7 +77,7 @@ resource "aws_lb_target_group" "main" {
 
   health_check {
     path                = var.health_path
-    matcher             = "200"
+    matcher             = var.health_check_matcher
     interval            = 30
     timeout             = 5
     healthy_threshold   = 2
@@ -142,10 +142,31 @@ resource "aws_iam_role_policy" "execution_secrets" {
 }
 
 # Separate from the execution role: this is what the app itself uses at
-# runtime. Empty by default — add S3, SQS etc. as the app needs them.
+# runtime. Carries nothing but ECS Exec support by default — add S3, SQS
+# etc. as the application needs them.
 resource "aws_iam_role" "task" {
   name               = "${var.name}-ecs-task"
   assume_role_policy = data.aws_iam_policy_document.assume.json
+}
+
+# Required by enable_execute_command on the service. Without these, exec
+# fails with a connection error rather than a permissions one.
+resource "aws_iam_role_policy" "task_exec_command" {
+  name = "ecs-exec"
+  role = aws_iam_role.task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel",
+      ]
+      Resource = "*"
+    }]
+  })
 }
 
 resource "aws_ecs_cluster" "main" {
@@ -246,6 +267,10 @@ resource "aws_ecs_service" "app_service" {
   }
 
   health_check_grace_period_seconds = 60
+
+  # Lets `aws ecs execute-command` open a shell in a running task, which is
+  # usually the fastest way to work out why a container is misbehaving.
+  enable_execute_command = true
 
   depends_on = [aws_lb_listener.http]
 }

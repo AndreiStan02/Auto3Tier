@@ -4,7 +4,8 @@ variable "name" {
 }
 
 variable "vpc_id" {
-  type = string
+  description = "VPC the load balancer, tasks and target group belong to"
+  type        = string
 }
 
 variable "public_subnet_ids" {
@@ -44,6 +45,12 @@ variable "health_path" {
     condition     = startswith(var.health_path, "/")
     error_message = "health_path must start with a forward slash."
   }
+}
+
+variable "health_check_matcher" {
+  description = "HTTP status codes counted as healthy. A backend whose health endpoint returns 204 will never go healthy on the default. Accepts a list or range, e.g. \"200,204\" or \"200-299\"."
+  type        = string
+  default     = "200"
 }
 
 variable "cpu_architecture" {
@@ -111,16 +118,22 @@ variable "db_security_group_id" {
   type        = string
 }
 
+# Host, port and database name are not secret, so they are passed to the
+# container as plain environment variables. Only the credentials come from
+# Secrets Manager.
 variable "db_endpoint" {
-  type = string
+  description = "Database hostname, injected as DB_HOST"
+  type        = string
 }
 
 variable "db_port" {
-  type = number
+  description = "Database port, injected as DB_PORT"
+  type        = number
 }
 
 variable "db_name" {
-  type = string
+  description = "Database name, injected as DB_NAME"
+  type        = string
 }
 
 # --- Observability -----------------------------------------------------
@@ -140,6 +153,7 @@ variable "log_retention_days" {
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Tags applied to every resource"
+  type        = map(string)
+  default     = {}
 }

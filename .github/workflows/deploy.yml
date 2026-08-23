@@ -94,10 +94,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          # --exclude also protects these from --delete, which is what we
+          # want: they are repo artifacts, not deployment artifacts.
           aws s3 sync spa/ "s3://$BUCKET" \
             --delete \
             --cache-control "public,max-age=31536000,immutable" \
-            --exclude index.html
+            --exclude index.html \
+            --exclude README.md \
+            --exclude ".gitkeep"
 
           aws s3 cp spa/index.html "s3://$BUCKET/index.html" \
             --cache-control "no-cache"

@@ -2,6 +2,8 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+data "aws_region" "current" {}
+
 locals {
   azs = slice(data.aws_availability_zones.available.names, 0, var.az_count)
 }
@@ -111,4 +113,17 @@ resource "aws_route_table_association" "data-rt-assoc" {
   count          = var.az_count
   subnet_id      = aws_subnet.data[count.index].id
   route_table_id = aws_route_table.data-rt.id
+}
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
+  vpc_endpoint_type = "Gateway"
+
+  route_table_ids = concat(
+    aws_route_table.app-rt[*].id,
+    [aws_route_table.data-rt.id],
+  )
+
+  tags = merge(var.tags, { Name = "${var.name}-s3-endpoint" })
 }
